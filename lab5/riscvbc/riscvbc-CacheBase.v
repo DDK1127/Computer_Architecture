@@ -166,9 +166,11 @@ wire [`OFF_BITS-1:0] offset = memreq_addr_reg[`OFF_BITS-1:0];
 wire [`IDX_BITS-1:0] index  = memreq_addr_reg[`OFF_BITS+`IDX_BITS-1:`OFF_BITS];
 wire [`TAG_BITS-1:0] tag    = memreq_addr_reg[31:`OFF_BITS+`IDX_BITS];
 
-// RAM read address: state-dependent
-wire [`IDX_BITS-1:0] ram_raddr = 
-    ((state == IDLE) || (state == READ_CACHE)) ? index_current : index;
+// Use the in-flight request index after the request has been accepted.
+// Reading the current bus address during READ_CACHE can mismatch the
+// latched tag compare and corrupt the fetch stream on longer benchmarks.
+wire [`IDX_BITS-1:0] ram_raddr =
+    (state == IDLE) ? index_current : index;
 
 //------------------------------------------------------------------------
 // I-cache RAM outputs
@@ -343,7 +345,9 @@ end
 reg [`VC_MEM_RESP_MSG_SZ(32)-1:0]   memresp_msg_reg; 
 reg [`VC_MEM_REQ_MSG_SZ(32,32)-1:0] cachereq_msg_reg;
 
-always @(*) begin
+always @( state or cache_hit or type or memreq_len_reg or read_data_hit
+        or memreq_addr_reg or refill_counter or memreq_type_reg
+        or read_data_miss ) begin
     // default: all zero
     memresp_msg_reg  = {`VC_MEM_RESP_MSG_SZ(32){1'b0}};
     cachereq_msg_reg = {`VC_MEM_REQ_MSG_SZ(32,32){1'b0}};
@@ -518,7 +522,7 @@ always @(*) begin
         end
 
         READ_MEM_REQ: begin
-            next_state = READ_MEM_RESP;
+            next_state = cachereq_rdy ? READ_MEM_RESP : READ_MEM_REQ;
         end
 
         READ_MEM_RESP: begin
@@ -596,11 +600,11 @@ always @(*) begin
         end
 
         READ_MEM_REQ: begin
-            cachereq_val_reg = 1'b1;
+            cachereq_val_reg  = 1'b1;
+            cacheresp_rdy_reg = 1'b1;
         end
 
         READ_MEM_RESP: begin
-            cachereq_val_reg  = 1'b1;
             cacheresp_rdy_reg = 1'b1;
             refill_cnt_en_reg = cacheresp_val;
         end

@@ -89,6 +89,7 @@ tests = \
   riscv-srl.vmh \
   riscv-srli.vmh \
   riscv-sub.vmh \
+  riscv-victim.vmh \
   riscv-xor.vmh \
   riscv-xori.vmh \
 
@@ -334,4 +335,3 @@ clean :
 	rm -rf *~ \#* *.vcd $(junk)
 
 .PHONY : clean
-

@@ -44,5 +44,6 @@ riscv_srcs += \
   riscv-srl.S \
   riscv-srli.S \
   riscv-sub.S \
+  riscv-victim.S \
   riscv-xor.S \
   riscv-xori.S \
