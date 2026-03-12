@@ -1,1 +1,8 @@
+.DS_Store
 *.pdf
+*.out
+*.o
+*.exe
+build/
+
+
