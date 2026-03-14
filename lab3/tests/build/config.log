@@ -14,7 +14,7 @@ hostname = DDK-Mac.local
 uname -m = x86_64
 uname -r = 24.6.0
 uname -s = Darwin
-uname -v = Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:40 PDT 2025; root:xnu-11417.140.69~1/RELEASE_ARM64_T8132
+uname -v = Darwin Kernel Version 24.6.0: Wed Nov  5 21:34:00 PST 2025; root:xnu-11417.140.69.705.2~1/RELEASE_ARM64_T8132
 
 /usr/bin/uname -p = i386
 /bin/uname -X     = unknown
@@ -23,30 +23,35 @@ uname -v = Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:40 PDT 2025; root:xnu-
 /usr/bin/arch -k       = unknown
 /usr/convex/getsysinfo = unknown
 /usr/bin/hostinfo      = Mach kernel version:
-	 Darwin Kernel Version 24.6.0: Mon Jul 14 11:30:40 PDT 2025; root:xnu-11417.140.69~1/RELEASE_ARM64_T8132
+	 Darwin Kernel Version 24.6.0: Wed Nov  5 21:34:00 PST 2025; root:xnu-11417.140.69.705.2~1/RELEASE_ARM64_T8132
 Kernel configured for up to 10 processors.
 10 processors are physically available.
 10 processors are logically available.
 Processor type: i486 (Intel 80486)
 Processors active: 0 1 2 3 4 5 6 7 8 9
 Primary memory available: 16.00 gigabytes
-Default processor set: 680 tasks, 3672 threads, 10 processors
-Load average: 2.48, Mach factor: 7.50
+Default processor set: 609 tasks, 3819 threads, 10 processors
+Load average: 2.97, Mach factor: 7.02
 /bin/machine           = unknown
 /usr/bin/oslevel       = unknown
 /bin/universe          = unknown
 
+PATH: /opt/homebrew/opt/lld/bin/
+PATH: /opt/homebrew/opt/llvm/bin/
 PATH: /Library/TeX/texbin/
 PATH: /opt/riscv/bin/
-PATH: /Users/dongchengen/.nvm/versions/node/v14.21.3/bin/
+PATH: /usr/local/go/bin/
+PATH: /Users/dongchengen/go/bin/
 PATH: /opt/homebrew/bin/
 PATH: /opt/homebrew/sbin/
-PATH: /usr/local/go/bin/
+PATH: /usr/local/bin/
+PATH: /usr/local/sbin/
+PATH: /Users/dongchengen/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand/
+PATH: /Users/dongchengen/Library/Application Support/Code/User/globalStorage/github.copilot-chat/copilotCli/
 PATH: /Library/Frameworks/Python.framework/Versions/3.10/bin/
 PATH: /Library/Frameworks/Python.framework/Versions/2.7/bin/
 PATH: /Library/Frameworks/Python.framework/Versions/3.7/bin/
 PATH: /Library/Frameworks/Python.framework/Versions/3.9/bin/
-PATH: /usr/local/bin/
 PATH: /System/Cryptexes/App/usr/bin/
 PATH: /usr/bin/
 PATH: /bin/
@@ -56,29 +61,10 @@ PATH: /var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin/
 PATH: /var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin/
 PATH: /var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin/
 PATH: /Library/Apple/usr/bin/
-PATH: /Library/TeX/texbin/
 PATH: /usr/local/share/dotnet/
 PATH: ~/.dotnet/tools/
-PATH: /usr/local/go/bin/
-PATH: /opt/homebrew/bin/
 PATH: /Library/Frameworks/Mono.framework/Versions/Current/Commands/
-PATH: /opt/riscv/bin/
-PATH: /Users/dongchengen/.nvm/versions/node/v14.21.3/bin/
-PATH: /opt/homebrew/sbin/
-PATH: /Library/Frameworks/Python.framework/Versions/3.10/bin/
-PATH: /Library/Frameworks/Python.framework/Versions/2.7/bin/
-PATH: /Library/Frameworks/Python.framework/Versions/3.7/bin/
-PATH: /Library/Frameworks/Python.framework/Versions/3.9/bin/
-PATH: /usr/local/go/
-PATH: /Users/dongchengen/go/
-PATH: /Users/dongchengen/go/bin/
-PATH: /usr/local/sbin/
-PATH: /Users/dongchengen/Library/Application Support/Code/User/globalStorage/github.copilot-chat/debugCommand/
-PATH: /usr/local/go/
-PATH: /usr/local/go/bin/
-PATH: /Users/dongchengen/go/
-PATH: /Users/dongchengen/go/bin/
-PATH: /usr/local/sbin/
+PATH: /Users/dongchengen/.vscode/extensions/ms-python.debugpy-2025.14.0-darwin-arm64/bundled/scripts/noConfigScripts/
 
 
 ## ----------- ##

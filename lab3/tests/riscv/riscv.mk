@@ -21,6 +21,7 @@ riscv_srcs += \
   riscv-bltu.S \
   riscv-div.S \
   riscv-divu.S \
+  riscv-dualfetch-kill.S \
   riscv-j.S \
   riscv-jalr.S \
   riscv-lb.S \
@@ -46,4 +47,3 @@ riscv_srcs += \
   riscv-sub.S \
   riscv-xor.S \
   riscv-xori.S \
-

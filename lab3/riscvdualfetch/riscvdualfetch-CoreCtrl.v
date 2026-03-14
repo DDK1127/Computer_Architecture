@@ -572,52 +572,53 @@ module riscv_CoreCtrl
   end
 
   //----------------------------------------------------------------------
-  // Steering Logic - issue_slot_Dhl 
+  // Steering Logic - Part 1 alternates between the two fetched instructions.
+  // `issue_slot_Dhl == 0` issues instruction 0, and `issue_slot_Dhl == 1`
+  // issues instruction 1 on the following cycle.
   //----------------------------------------------------------------------
 
   reg issue_slot_Dhl;
+  wire issue_second_slot_Dhl;
+  assign issue_second_slot_Dhl = issue_slot_Dhl;
 
   always @(posedge clk) begin
     if (reset || ((brj_taken_Dhl || brj_taken_X0hl) && !stall_X0hl)) begin
       issue_slot_Dhl <= 1'b0;
     end
     else if (inst_val_Dhl && !(stall_hazard_Dhl || stall_X0hl)) begin
-      if (issue_slot_Dhl == 1'b0)
-        issue_slot_Dhl <= 1'b1;
-      else if (issue_slot_Dhl == 1'b1)
-        issue_slot_Dhl <= 1'b0;
+      issue_slot_Dhl <= ~issue_slot_Dhl;
     end
   end
 
-  // TODO: generate your steering signal here!
+  assign steering_mux_sel_Dhl = issue_second_slot_Dhl;
 
-  assign steering_mux_sel_Dhl = issue_slot_Dhl;
-
-  // instA_Dhl: 發送到 pipeline A 的指令
+  // Pipeline A is the only active issue slot in Part 1. Select which of the
+  // two fetched instructions should feed pipeline A this cycle.
   always @(*) begin
-    if ( issue_slot_Dhl == 1'b0 ) begin
-      instA_Dhl <= ir0_Dhl;
-      opA0_byp_mux_sel_Dhl <= op00_byp_mux_sel_Dhl;
-      opA1_byp_mux_sel_Dhl <= op01_byp_mux_sel_Dhl;
-      opA0_mux_sel_Dhl <= op00_mux_sel_Dhl;
-      opA1_mux_sel_Dhl <= op01_mux_sel_Dhl;
+    if ( !issue_second_slot_Dhl ) begin
+      instA_Dhl            = ir0_Dhl;
+      opA0_byp_mux_sel_Dhl = op00_byp_mux_sel_Dhl;
+      opA1_byp_mux_sel_Dhl = op01_byp_mux_sel_Dhl;
+      opA0_mux_sel_Dhl     = op00_mux_sel_Dhl;
+      opA1_mux_sel_Dhl     = op01_mux_sel_Dhl;
     end
     else begin
-      instA_Dhl <= ir1_Dhl;
-      opA0_byp_mux_sel_Dhl <= op10_byp_mux_sel_Dhl;
-      opA1_byp_mux_sel_Dhl <= op11_byp_mux_sel_Dhl;
-      opA0_mux_sel_Dhl <= op10_mux_sel_Dhl;
-      opA1_mux_sel_Dhl <= op11_mux_sel_Dhl;
+      instA_Dhl            = ir1_Dhl;
+      opA0_byp_mux_sel_Dhl = op10_byp_mux_sel_Dhl;
+      opA1_byp_mux_sel_Dhl = op11_byp_mux_sel_Dhl;
+      opA0_mux_sel_Dhl     = op10_mux_sel_Dhl;
+      opA1_mux_sel_Dhl     = op11_mux_sel_Dhl;
     end
   end
 
-  // assign opB0_byp_mux_sel_Dhl = 4'd0;
-  // assign opB0_mux_sel_Dhl = 2'd0;
-  // assign opB1_byp_mux_sel_Dhl = 4'd0;
-  // assign opB1_mux_sel_Dhl = 3'd0;
-  // assign aluB_fn_X0hl = 4'd0;
-  // assign rfB_wen_out_Whl = 1'b0;
-  // assign rfB_waddr_Whl = 5'd0;
+  // Pipeline B is unused in Part 1.
+  assign opB0_byp_mux_sel_Dhl = 4'd0;
+  assign opB0_mux_sel_Dhl     = 2'd0;
+  assign opB1_byp_mux_sel_Dhl = 4'd0;
+  assign opB1_mux_sel_Dhl     = 3'd0;
+  assign aluB_fn_X0hl         = 4'd0;
+  assign rfB_wen_out_Whl      = 1'b0;
+  assign rfB_waddr_Whl        = 5'd0;
 
   // Jump and Branch Controls
 
@@ -633,14 +634,14 @@ module riscv_CoreCtrl
   wire [1:0] pc_mux_sel_1_Dhl = cs1[`RISCV_INST_MSG_PC_SEL];
 
   //----------------------------------------------------------------------
-  // Jump and Branch Controls - 根據當前發射的指令
+  // Jump and branch controls for the currently issued instruction.
   //----------------------------------------------------------------------
 
-  wire brj_taken_Dhl = ( issue_slot_Dhl == 1'b0 ) ? brj_taken_0_Dhl : brj_taken_1_Dhl;
+  wire brj_taken_Dhl = ( !issue_second_slot_Dhl ) ? brj_taken_0_Dhl : brj_taken_1_Dhl;
 
-  wire [2:0] br_sel_Dhl = ( issue_slot_Dhl == 1'b0 ) ? br_sel_0_Dhl : br_sel_1_Dhl;
+  wire [2:0] br_sel_Dhl = ( !issue_second_slot_Dhl ) ? br_sel_0_Dhl : br_sel_1_Dhl;
 
-  wire [1:0] pc_mux_sel_Dhl = ( issue_slot_Dhl == 1'b0 ) ? pc_mux_sel_0_Dhl : pc_mux_sel_1_Dhl;
+  wire [1:0] pc_mux_sel_Dhl = ( !issue_second_slot_Dhl ) ? pc_mux_sel_0_Dhl : pc_mux_sel_1_Dhl;
 
   // Operand Bypassing Logic
 
@@ -890,32 +891,35 @@ module riscv_CoreCtrl
   //----------------------------------------------------------------------
 
   // ALU Function
-  wire [3:0] aluA_fn_Dhl = ( issue_slot_Dhl == 1'b0 ) ? alu0_fn_Dhl : alu1_fn_Dhl;
+  wire [3:0] aluA_fn_Dhl = ( !issue_second_slot_Dhl ) ? alu0_fn_Dhl : alu1_fn_Dhl;
 
   // Muldiv
   always @(*) begin
-    muldivreq_msg_fn_Dhl = ( issue_slot_Dhl == 1'b0 ) ? muldivreq_msg_fn_0_Dhl : muldivreq_msg_fn_1_Dhl;
+    muldivreq_msg_fn_Dhl = ( !issue_second_slot_Dhl ) ? muldivreq_msg_fn_0_Dhl
+                                                      : muldivreq_msg_fn_1_Dhl;
   end
 
-  wire muldivreq_val_Dhl = ( issue_slot_Dhl == 1'b0 ) ? muldivreq_val_0_Dhl : muldivreq_val_1_Dhl;
-  wire muldiv_mux_sel_Dhl = ( issue_slot_Dhl == 1'b0 ) ? muldiv_mux_sel_0_Dhl : muldiv_mux_sel_1_Dhl;
-  wire execute_mux_sel_Dhl = ( issue_slot_Dhl == 1'b0 ) ? execute_mux_sel_0_Dhl : execute_mux_sel_1_Dhl;
+  wire muldivreq_val_Dhl = ( !issue_second_slot_Dhl ) ? muldivreq_val_0_Dhl : muldivreq_val_1_Dhl;
+  wire muldiv_mux_sel_Dhl = ( !issue_second_slot_Dhl ) ? muldiv_mux_sel_0_Dhl : muldiv_mux_sel_1_Dhl;
+  wire execute_mux_sel_Dhl = ( !issue_second_slot_Dhl ) ? execute_mux_sel_0_Dhl : execute_mux_sel_1_Dhl;
 
   // Memory
-  wire is_load_Dhl = ( issue_slot_Dhl == 1'b0 ) ? is_load_0_Dhl : is_load_1_Dhl;
-  wire dmemreq_msg_rw_Dhl = ( issue_slot_Dhl == 1'b0 ) ? dmemreq_msg_rw_0_Dhl : dmemreq_msg_rw_1_Dhl;
-  wire [1:0] dmemreq_msg_len_Dhl = ( issue_slot_Dhl == 1'b0 ) ? dmemreq_msg_len_0_Dhl : dmemreq_msg_len_1_Dhl;
-  wire dmemreq_val_Dhl = ( issue_slot_Dhl == 1'b0 ) ? dmemreq_val_0_Dhl : dmemreq_val_1_Dhl;
-  wire [2:0] dmemresp_mux_sel_Dhl = ( issue_slot_Dhl == 1'b0 ) ? dmemresp_mux_sel_0_Dhl : dmemresp_mux_sel_1_Dhl;
-  wire memex_mux_sel_Dhl = ( issue_slot_Dhl == 1'b0 ) ? memex_mux_sel_0_Dhl : memex_mux_sel_1_Dhl;
+  wire is_load_Dhl = ( !issue_second_slot_Dhl ) ? is_load_0_Dhl : is_load_1_Dhl;
+  wire dmemreq_msg_rw_Dhl = ( !issue_second_slot_Dhl ) ? dmemreq_msg_rw_0_Dhl : dmemreq_msg_rw_1_Dhl;
+  wire [1:0] dmemreq_msg_len_Dhl = ( !issue_second_slot_Dhl ) ? dmemreq_msg_len_0_Dhl
+                                                               : dmemreq_msg_len_1_Dhl;
+  wire dmemreq_val_Dhl = ( !issue_second_slot_Dhl ) ? dmemreq_val_0_Dhl : dmemreq_val_1_Dhl;
+  wire [2:0] dmemresp_mux_sel_Dhl = ( !issue_second_slot_Dhl ) ? dmemresp_mux_sel_0_Dhl
+                                                                : dmemresp_mux_sel_1_Dhl;
+  wire memex_mux_sel_Dhl = ( !issue_second_slot_Dhl ) ? memex_mux_sel_0_Dhl : memex_mux_sel_1_Dhl;
 
   // Register file
-  wire rfA_wen_Dhl = ( issue_slot_Dhl == 1'b0 ) ? rf0_wen_Dhl : rf1_wen_Dhl;
-  wire [4:0] rfA_waddr_Dhl = ( issue_slot_Dhl == 1'b0 ) ? rf0_waddr_Dhl : rf1_waddr_Dhl;
+  wire rfA_wen_Dhl = ( !issue_second_slot_Dhl ) ? rf0_wen_Dhl : rf1_wen_Dhl;
+  wire [4:0] rfA_waddr_Dhl = ( !issue_second_slot_Dhl ) ? rf0_waddr_Dhl : rf1_waddr_Dhl;
 
   // CSR
-  wire csr_wen_Dhl = ( issue_slot_Dhl == 1'b0 ) ? csr_wen_0_Dhl : csr_wen_1_Dhl;
-  wire [11:0] csr_addr_Dhl = ( issue_slot_Dhl == 1'b0 ) ? csr_addr_0_Dhl : csr_addr_1_Dhl;
+  wire csr_wen_Dhl = ( !issue_second_slot_Dhl ) ? csr_wen_0_Dhl : csr_wen_1_Dhl;
+  wire [11:0] csr_addr_Dhl = ( !issue_second_slot_Dhl ) ? csr_addr_0_Dhl : csr_addr_1_Dhl;
 
   //----------------------------------------------------------------------
   // Scoreboard
@@ -1028,16 +1032,18 @@ module riscv_CoreCtrl
 
   // Aggregate Stall Signal
   // Hazard detection 
-  wire stall_hazard_Dhl =  ( issue_slot_Dhl == 1'b0 ) 
+  wire stall_hazard_Dhl =  ( !issue_second_slot_Dhl )
                         ?  ( stall_0_muldiv_use_Dhl || stall_0_load_use_Dhl )
                         :  ( stall_1_muldiv_use_Dhl || stall_1_load_use_Dhl );
 
-  wire stall_issue_Dhl = (issue_slot_Dhl == 1'b0 && inst_val_Dhl && !brj_taken_Dhl);
-  assign stall_Dhl = (stall_hazard_Dhl || stall_X0hl || stall_issue_Dhl); // TODO
+  // After issuing instruction 0 we intentionally hold D for one cycle so
+  // instruction 1 remains available for the next issue opportunity.
+  wire hold_second_slot_Dhl = ( !issue_second_slot_Dhl && inst_val_Dhl && !brj_taken_Dhl );
+  assign stall_Dhl = ( stall_hazard_Dhl || stall_X0hl || hold_second_slot_Dhl );
 
   // Next bubble bit
 
-  wire bubble_sel_Dhl  = squash_Dhl || stall_hazard_Dhl || stall_X0hl; // TODO
+  wire bubble_sel_Dhl  = squash_Dhl || stall_hazard_Dhl || stall_X0hl;
   wire bubble_next_Dhl = ( !bubble_sel_Dhl ) ? bubble_Dhl
                        : ( bubble_sel_Dhl )  ? 1'b1
                        :                       1'bx;
@@ -1413,7 +1419,7 @@ module riscv_CoreCtrl
   always @ ( posedge clk ) begin
     irA_debug       <= irA_Whl;
     inst_val_debug <= inst_val_Whl;
-    irB_debug       <= 32'b0; // FIXME: fix this when you can have two instructions issued per cycle!
+    irB_debug       <= 32'b0; // Pipeline B is unused in Part 1.
   end
 
   //----------------------------------------------------------------------
@@ -1434,7 +1440,16 @@ module riscv_CoreCtrl
 //========================================================================
 // Disassemble instructions
 //========================================================================
-  wire [31:0] irB_X0hl, irB_X1hl, irB_X2hl, irB_X3hl, irB_Whl;
+  wire [31:0] irB_X0hl;
+  wire [31:0] irB_X1hl;
+  wire [31:0] irB_X2hl;
+  wire [31:0] irB_X3hl;
+  wire [31:0] irB_Whl;
+  assign irB_X0hl = 32'b0;
+  assign irB_X1hl = 32'b0;
+  assign irB_X2hl = 32'b0;
+  assign irB_X3hl = 32'b0;
+  assign irB_Whl  = 32'b0;
 
   `ifndef SYNTHESIS
 
@@ -1556,9 +1571,7 @@ module riscv_CoreCtrl
       if ( stats_en || csr_stats ) begin
         num_cycles = num_cycles + 1;
 
-        // Count instructions for every cycle not squashed or stalled
-
-        // FIXME: fix this when you can have at most two instructions issued per cycle!
+        // Part 1 still issues at most one instruction per cycle.
         if ( inst_val_Dhl && !stall_Dhl ) begin
           num_inst = num_inst + 1;
         end

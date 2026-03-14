@@ -48,7 +48,7 @@ module riscv_CoreCtrl
   output reg [31:0] instA_Dhl,
   output     [31:0] instB_Dhl,
   output reg [ 3:0] aluA_fn_X0hl,
-  output     [ 3:0] aluB_fn_X0hl,
+  output reg [ 3:0] aluB_fn_X0hl,
   output reg [ 2:0] muldivreq_msg_fn_Dhl,
   output            muldivreq_val,
   input             muldivreq_rdy,
@@ -64,7 +64,7 @@ module riscv_CoreCtrl
   output            rfA_wen_out_Whl,
   output reg [ 4:0] rfA_waddr_Whl,
   output            rfB_wen_out_Whl,
-  output     [ 4:0] rfB_waddr_Whl,
+  output reg [ 4:0] rfB_waddr_Whl,
   output            stall_Fhl,
   output            stall_Dhl,
   output            stall_X0hl,
@@ -241,6 +241,8 @@ module riscv_CoreCtrl
 
   localparam n = 1'd0;
   localparam y = 1'd1;
+
+  localparam [31:0] rv32_nop = 32'h00000013;
 
   // Register specifiers
 
@@ -445,6 +447,89 @@ module riscv_CoreCtrl
   reg [cs_sz-1:0] cs0;
   reg [cs_sz-1:0] cs1;
 
+  //----------------------------------------------------------------------
+  // Pipeline State Used by Scoreboard and Issue Logic
+  //----------------------------------------------------------------------
+
+  reg [31:0] irA_X0hl;
+  reg [31:0] irB_X0hl;
+  reg  [2:0] br_sel_X0hl;
+  reg        muldivreq_val_X0hl;
+  reg        muldiv_mux_sel_X0hl;
+  reg        execute_mux_sel_X0hl;
+  reg        is_load_X0hl;
+  reg        is_muldiv_X0hl;
+  reg        dmemreq_msg_rw_X0hl;
+  reg  [1:0] dmemreq_msg_len_X0hl;
+  reg        dmemreq_val_X0hl;
+  reg  [2:0] dmemresp_mux_sel_X0hl;
+  reg        memex_mux_sel_X0hl;
+  reg        rfA_wen_X0hl;
+  reg  [4:0] rfA_waddr_X0hl;
+  reg        instB_val_X0hl;
+  reg        rfB_wen_X0hl;
+  reg  [4:0] rfB_waddr_X0hl;
+  reg        csr_wen_X0hl;
+  reg [11:0] csr_addr_X0hl;
+  reg        bubble_X0hl;
+
+  reg [31:0] irA_X1hl;
+  reg [31:0] irB_X1hl;
+  reg        is_load_X1hl;
+  reg        is_muldiv_X1hl;
+  reg        dmemreq_val_X1hl;
+  reg        execute_mux_sel_X1hl;
+  reg        muldiv_mux_sel_X1hl;
+  reg        rfA_wen_X1hl;
+  reg  [4:0] rfA_waddr_X1hl;
+  reg        instB_val_X1hl;
+  reg        rfB_wen_X1hl;
+  reg  [4:0] rfB_waddr_X1hl;
+  reg        csr_wen_X1hl;
+  reg [11:0] csr_addr_X1hl;
+  reg        bubble_X1hl;
+
+  reg [31:0] irA_X2hl;
+  reg [31:0] irB_X2hl;
+  reg        is_muldiv_X2hl;
+  reg        rfA_wen_X2hl;
+  reg  [4:0] rfA_waddr_X2hl;
+  reg        instB_val_X2hl;
+  reg        rfB_wen_X2hl;
+  reg  [4:0] rfB_waddr_X2hl;
+  reg        csr_wen_X2hl;
+  reg [11:0] csr_addr_X2hl;
+  reg        execute_mux_sel_X2hl;
+  reg        muldiv_mux_sel_X2hl;
+  reg        bubble_X2hl;
+
+  reg [31:0] irA_X3hl;
+  reg [31:0] irB_X3hl;
+  reg        is_muldiv_X3hl;
+  reg        rfA_wen_X3hl;
+  reg  [4:0] rfA_waddr_X3hl;
+  reg        instB_val_X3hl;
+  reg        rfB_wen_X3hl;
+  reg  [4:0] rfB_waddr_X3hl;
+  reg        csr_wen_X3hl;
+  reg [11:0] csr_addr_X3hl;
+  reg        bubble_X3hl;
+
+  reg [31:0] irA_Whl;
+  reg [31:0] irB_Whl;
+  reg        rfA_wen_Whl;
+  reg        instB_val_Whl;
+  reg        rfB_wen_Whl;
+  reg        csr_wen_Whl;
+  reg [11:0] csr_addr_Whl;
+  reg        bubble_Whl;
+
+  wire       inst_val_X0hl;
+  wire       inst_val_X1hl;
+  wire       inst_val_X2hl;
+  wire       inst_val_X3hl;
+  wire       inst_val_Whl;
+
   always @ (*) begin
 
     cs0 = {cs_sz{1'bx}}; // Default to invalid instruction
@@ -572,62 +657,30 @@ module riscv_CoreCtrl
   end
 
   //----------------------------------------------------------------------
-  // Steering Logic - issue_slot_Dhl 
+  // Steering, Scoreboard, and Decode/Issue Control
   //----------------------------------------------------------------------
 
-  wire is_alu_0_Dhl = (!cs0[`RISCV_INST_MSG_J_EN])
-                   && (cs0[`RISCV_INST_MSG_BR_SEL] == br_none)
-                   && (cs0[`RISCV_INST_MSG_MULDIV_EN] == n)
-                   && (cs0[`RISCV_INST_MSG_MEM_REQ] == nr);
+  // `issue_slot_Dhl` is the only state bit in the decode/issue chooser.
+  // - 0: decode is looking at a fresh fetch pair (inst0, inst1)
+  // - 1: inst0 was already issued in a previous cycle, so inst1 is now
+  //      the oldest remaining instruction and must be considered first
 
+  wire is_simple_alu_0_Dhl = (!cs0[`RISCV_INST_MSG_J_EN])
+                          && (cs0[`RISCV_INST_MSG_BR_SEL] == br_none)
+                          && (cs0[`RISCV_INST_MSG_MULDIV_EN] == n)
+                          && (cs0[`RISCV_INST_MSG_MEM_REQ] == nr)
+                          && (cs0[`RISCV_INST_MSG_CSR_WEN] == n);
 
-  wire is_alu_1_Dhl = (!cs1[`RISCV_INST_MSG_J_EN])
-                   && (cs1[`RISCV_INST_MSG_BR_SEL] == br_none)
-                   && (cs1[`RISCV_INST_MSG_MULDIV_EN] == n)
-                   && (cs1[`RISCV_INST_MSG_MEM_REQ] == nr);
+  wire is_simple_alu_1_Dhl = (!cs1[`RISCV_INST_MSG_J_EN])
+                          && (cs1[`RISCV_INST_MSG_BR_SEL] == br_none)
+                          && (cs1[`RISCV_INST_MSG_MULDIV_EN] == n)
+                          && (cs1[`RISCV_INST_MSG_MEM_REQ] == nr)
+                          && (cs1[`RISCV_INST_MSG_CSR_WEN] == n);
+
+  wire is_ctrl_0_Dhl = cs0[`RISCV_INST_MSG_J_EN]
+                    || ( cs0[`RISCV_INST_MSG_BR_SEL] != br_none );
 
   reg issue_slot_Dhl;
-
-  always @(posedge clk) begin
-    if (reset || ((brj_taken_Dhl || brj_taken_X0hl) && !stall_X0hl)) begin
-      issue_slot_Dhl <= 1'b0;
-    end
-    else if (inst_val_Dhl && !(stall_hazard_Dhl || stall_X0hl)) begin
-      issue_slot_Dhl <= ~issue_slot_Dhl;
-    end
-  end
-
-
-  // TODO: generate your steering signal here!
-
-  assign steering_mux_sel_Dhl = issue_slot_Dhl;
-
-  // instA_Dhl: 發送到 pipeline A 的指令
-  always @(*) begin
-    if ( issue_slot_Dhl == 1'b0 ) begin
-      instA_Dhl <= ir0_Dhl;
-      opA0_byp_mux_sel_Dhl <= op00_byp_mux_sel_Dhl;
-      opA1_byp_mux_sel_Dhl <= op01_byp_mux_sel_Dhl;
-      opA0_mux_sel_Dhl <= op00_mux_sel_Dhl;
-      opA1_mux_sel_Dhl <= op01_mux_sel_Dhl;
-    end
-    else begin
-      instA_Dhl <= ir1_Dhl;
-      opA0_byp_mux_sel_Dhl <= op10_byp_mux_sel_Dhl;
-      opA1_byp_mux_sel_Dhl <= op11_byp_mux_sel_Dhl;
-      opA0_mux_sel_Dhl <= op10_mux_sel_Dhl;
-      opA1_mux_sel_Dhl <= op11_mux_sel_Dhl;
-    end
-  end
-
-  // assign opB0_byp_mux_sel_Dhl = 4'd0;
-  // assign opB0_mux_sel_Dhl = 2'd0;
-  // assign opB1_byp_mux_sel_Dhl = 4'd0;
-  // assign opB1_mux_sel_Dhl = 3'd0;
-  // assign aluB_fn_X0hl = 4'd0;
-  // assign rfB_wen_out_Whl = 1'b0;
-  // assign rfB_waddr_Whl = 5'd0;
-
 
   // Jump and Branch Controls
 
@@ -642,181 +695,22 @@ module riscv_CoreCtrl
   wire [1:0] pc_mux_sel_0_Dhl = cs0[`RISCV_INST_MSG_PC_SEL];
   wire [1:0] pc_mux_sel_1_Dhl = cs1[`RISCV_INST_MSG_PC_SEL];
 
-  // Operand Bypassing Logic
+  // Source Register Metadata
 
   wire [4:0] rs10_addr_Dhl  = inst0_rs1_Dhl;
   wire [4:0] rs20_addr_Dhl  = inst0_rs2_Dhl;
-
   wire [4:0] rs11_addr_Dhl  = inst1_rs1_Dhl;
   wire [4:0] rs21_addr_Dhl  = inst1_rs2_Dhl;
 
   wire       rs10_en_Dhl    = cs0[`RISCV_INST_MSG_RS1_EN];
   wire       rs20_en_Dhl    = cs0[`RISCV_INST_MSG_RS2_EN];
-
   wire       rs11_en_Dhl    = cs1[`RISCV_INST_MSG_RS1_EN];
   wire       rs21_en_Dhl    = cs1[`RISCV_INST_MSG_RS2_EN];
-
-  // For Part 2 and Optionaly Part 1, replace the following control logic with a scoreboard
-
-  wire       rs10_AX0_byp_Dhl = rs10_en_Dhl
-                         && rfA_wen_X0hl
-                         && (rs10_addr_Dhl == rfA_waddr_X0hl)
-                         && !(rfA_waddr_X0hl == 5'd0)
-                         && inst_val_X0hl;
-
-  wire       rs10_AX1_byp_Dhl = rs10_en_Dhl
-                         && rfA_wen_X1hl
-                         && (rs10_addr_Dhl == rfA_waddr_X1hl)
-                         && !(rfA_waddr_X1hl == 5'd0)
-                         && inst_val_X1hl;
-
-  wire       rs10_AX2_byp_Dhl = rs10_en_Dhl
-                         && rfA_wen_X2hl
-                         && (rs10_addr_Dhl == rfA_waddr_X2hl)
-                         && !(rfA_waddr_X2hl == 5'd0)
-                         && inst_val_X2hl;
-
-  wire       rs10_AX3_byp_Dhl = rs10_en_Dhl
-                         && rfA_wen_X3hl
-                         && (rs10_addr_Dhl == rfA_waddr_X3hl)
-                         && !(rfA_waddr_X3hl == 5'd0)
-                         && inst_val_X3hl;
-
-  wire       rs10_AW_byp_Dhl = rs10_en_Dhl
-                         && rfA_wen_Whl
-                         && (rs10_addr_Dhl == rfA_waddr_Whl)
-                         && !(rfA_waddr_Whl == 5'd0)
-                         && inst_val_Whl;
-
-  wire       rs20_AX0_byp_Dhl = rs20_en_Dhl
-                         && rfA_wen_X0hl
-                         && (rs20_addr_Dhl == rfA_waddr_X0hl)
-                         && !(rfA_waddr_X0hl == 5'd0)
-                         && inst_val_X0hl;
-
-  wire       rs20_AX1_byp_Dhl = rs20_en_Dhl
-                         && rfA_wen_X1hl
-                         && (rs20_addr_Dhl == rfA_waddr_X1hl)
-                         && !(rfA_waddr_X1hl == 5'd0)
-                         && inst_val_X1hl;
-
-  wire       rs20_AX2_byp_Dhl = rs20_en_Dhl
-                         && rfA_wen_X2hl
-                         && (rs20_addr_Dhl == rfA_waddr_X2hl)
-                         && !(rfA_waddr_X2hl == 5'd0)
-                         && inst_val_X2hl;
-
-  wire       rs20_AX3_byp_Dhl = rs20_en_Dhl
-                         && rfA_wen_X3hl
-                         && (rs20_addr_Dhl == rfA_waddr_X3hl)
-                         && !(rfA_waddr_X3hl == 5'd0)
-                         && inst_val_X3hl;
-
-  wire       rs20_AW_byp_Dhl = rs20_en_Dhl
-                         && rfA_wen_Whl
-                         && (rs20_addr_Dhl == rfA_waddr_Whl)
-                         && !(rfA_waddr_Whl == 5'd0)
-                         && inst_val_Whl;
-
-  wire       rs11_AX0_byp_Dhl = rs11_en_Dhl
-                         && rfA_wen_X0hl
-                         && (rs11_addr_Dhl == rfA_waddr_X0hl)
-                         && !(rfA_waddr_X0hl == 5'd0)
-                         && inst_val_X0hl;
-
-  wire       rs11_AX1_byp_Dhl = rs11_en_Dhl
-                         && rfA_wen_X1hl
-                         && (rs11_addr_Dhl == rfA_waddr_X1hl)
-                         && !(rfA_waddr_X1hl == 5'd0)
-                         && inst_val_X1hl;
-
-  wire       rs11_AX2_byp_Dhl = rs11_en_Dhl
-                         && rfA_wen_X2hl
-                         && (rs11_addr_Dhl == rfA_waddr_X2hl)
-                         && !(rfA_waddr_X2hl == 5'd0)
-                         && inst_val_X2hl;
-
-  wire       rs11_AX3_byp_Dhl = rs11_en_Dhl
-                         && rfA_wen_X3hl
-                         && (rs11_addr_Dhl == rfA_waddr_X3hl)
-                         && !(rfA_waddr_X3hl == 5'd0)
-                         && inst_val_X3hl;
-
-  wire       rs11_AW_byp_Dhl = rs11_en_Dhl
-                         && rfA_wen_Whl
-                         && (rs11_addr_Dhl == rfA_waddr_Whl)
-                         && !(rfA_waddr_Whl == 5'd0)
-                         && inst_val_Whl;
-
-  wire       rs21_AX0_byp_Dhl = rs21_en_Dhl
-                         && rfA_wen_X0hl
-                         && (rs21_addr_Dhl == rfA_waddr_X0hl)
-                         && !(rfA_waddr_X0hl == 5'd0)
-                         && inst_val_X0hl;
-
-  wire       rs21_AX1_byp_Dhl = rs21_en_Dhl
-                         && rfA_wen_X1hl
-                         && (rs21_addr_Dhl == rfA_waddr_X1hl)
-                         && !(rfA_waddr_X1hl == 5'd0)
-                         && inst_val_X1hl;
-
-  wire       rs21_AX2_byp_Dhl = rs21_en_Dhl
-                         && rfA_wen_X2hl
-                         && (rs21_addr_Dhl == rfA_waddr_X2hl)
-                         && !(rfA_waddr_X2hl == 5'd0)
-                         && inst_val_X2hl;
-
-  wire       rs21_AX3_byp_Dhl = rs21_en_Dhl
-                         && rfA_wen_X3hl
-                         && (rs21_addr_Dhl == rfA_waddr_X3hl)
-                         && !(rfA_waddr_X3hl == 5'd0)
-                         && inst_val_X3hl;
-
-  wire       rs21_AW_byp_Dhl = rs21_en_Dhl
-                         && rfA_wen_Whl
-                         && (rs21_addr_Dhl == rfA_waddr_Whl)
-                         && !(rfA_waddr_Whl == 5'd0)
-                         && inst_val_Whl;
-
-  // Operand Bypass Mux Select
-
-  wire [3:0] op00_byp_mux_sel_Dhl
-    = ( rs10_AX0_byp_Dhl ) ? am_AX0_byp
-    : ( rs10_AX1_byp_Dhl ) ? am_AX1_byp
-    : ( rs10_AX2_byp_Dhl ) ? am_AX2_byp
-    : ( rs10_AX3_byp_Dhl ) ? am_AX3_byp
-    : ( rs10_AW_byp_Dhl  ) ? am_AW_byp
-    :                        am_r0;
-
-  wire [3:0] op01_byp_mux_sel_Dhl
-    = ( rs20_AX0_byp_Dhl ) ? bm_AX0_byp
-    : ( rs20_AX1_byp_Dhl ) ? bm_AX1_byp
-    : ( rs20_AX2_byp_Dhl ) ? bm_AX2_byp
-    : ( rs20_AX3_byp_Dhl ) ? bm_AX3_byp
-    : ( rs20_AW_byp_Dhl  ) ? bm_AW_byp
-    :                        bm_r1;
-
-  wire [3:0] op10_byp_mux_sel_Dhl
-    = ( rs11_AX0_byp_Dhl ) ? am_AX0_byp
-    : ( rs11_AX1_byp_Dhl ) ? am_AX1_byp
-    : ( rs11_AX2_byp_Dhl ) ? am_AX2_byp
-    : ( rs11_AX3_byp_Dhl ) ? am_AX3_byp
-    : ( rs11_AW_byp_Dhl  ) ? am_AW_byp
-    :                        am_r0;
-
-  wire [3:0] op11_byp_mux_sel_Dhl
-    = ( rs21_AX0_byp_Dhl ) ? bm_AX0_byp
-    : ( rs21_AX1_byp_Dhl ) ? bm_AX1_byp
-    : ( rs21_AX2_byp_Dhl ) ? bm_AX2_byp
-    : ( rs21_AX3_byp_Dhl ) ? bm_AX3_byp
-    : ( rs21_AW_byp_Dhl  ) ? bm_AW_byp
-    :                        bm_r1;
 
   // Operand Mux Select
 
   wire [1:0] op00_mux_sel_Dhl = cs0[`RISCV_INST_MSG_OP0_SEL];
   wire [2:0] op01_mux_sel_Dhl = cs0[`RISCV_INST_MSG_OP1_SEL];
-
   wire [1:0] op10_mux_sel_Dhl = cs1[`RISCV_INST_MSG_OP0_SEL];
   wire [2:0] op11_mux_sel_Dhl = cs1[`RISCV_INST_MSG_OP1_SEL];
 
@@ -857,17 +751,11 @@ module riscv_CoreCtrl
   wire       dmemreq_val_0_Dhl = ( cs0[`RISCV_INST_MSG_MEM_REQ] != nr );
   wire       dmemreq_val_1_Dhl = ( cs1[`RISCV_INST_MSG_MEM_REQ] != nr );
 
-  // Memory response mux select
-
   wire [2:0] dmemresp_mux_sel_0_Dhl = cs0[`RISCV_INST_MSG_MEM_SEL];
   wire [2:0] dmemresp_mux_sel_1_Dhl = cs1[`RISCV_INST_MSG_MEM_SEL];
 
-  // Writeback Mux Select
-
   wire       memex_mux_sel_0_Dhl = cs0[`RISCV_INST_MSG_WB_SEL];
   wire       memex_mux_sel_1_Dhl = cs1[`RISCV_INST_MSG_WB_SEL];
-
-  // Register Writeback Controls
 
   wire       rf0_wen_Dhl   = cs0[`RISCV_INST_MSG_RF_WEN];
   wire [4:0] rf0_waddr_Dhl = cs0[`RISCV_INST_MSG_RF_WADDR];
@@ -875,137 +763,272 @@ module riscv_CoreCtrl
   wire       rf1_wen_Dhl   = cs1[`RISCV_INST_MSG_RF_WEN];
   wire [4:0] rf1_waddr_Dhl = cs1[`RISCV_INST_MSG_RF_WADDR];
 
-  // CSR register write enable
-
   wire       csr_wen_0_Dhl = cs0[`RISCV_INST_MSG_CSR_WEN];
   wire       csr_wen_1_Dhl = cs1[`RISCV_INST_MSG_CSR_WEN];
-
-  // CSR register address
 
   wire [11:0] csr_addr_0_Dhl = ir0_Dhl[31:20];
   wire [11:0] csr_addr_1_Dhl = ir1_Dhl[31:20];
 
-  //----------------------------------------------------------------------
-  // Scoreboard
-  //----------------------------------------------------------------------
+  // Scoreboard outputs are indexed by the original fetch order (inst0/inst1).
 
-  // riscv_CoreScoreboard scoreboard
-  // (
-  //   .clk               (),
-  //   .reset             (),
+  wire       stall_0_hazard_sb_Dhl;
+  wire       stall_1_hazard_sb_Dhl;
+  wire [3:0] op00_byp_mux_sel_Dhl;
+  wire [3:0] op01_byp_mux_sel_Dhl;
+  wire [3:0] op10_byp_mux_sel_Dhl;
+  wire [3:0] op11_byp_mux_sel_Dhl;
 
-  //   .inst_val_Dhl      (),
+  // Same-cycle dependencies must be resolved in decode before steering.
 
-  //   .src00             (),
-  //   .src00_en          (),
-  //   .src01             (),
-  //   .src01_en          (),
-  //   .src10             (),
-  //   .src10_en          (),
-  //   .src11             (),
-  //   .src11_en          (),
+  wire same_cycle_raw_Dhl = rf0_wen_Dhl
+                         && ( rf0_waddr_Dhl != 5'd0 )
+                         && ( ( rs11_en_Dhl && ( rs11_addr_Dhl == rf0_waddr_Dhl ) )
+                           || ( rs21_en_Dhl && ( rs21_addr_Dhl == rf0_waddr_Dhl ) ) );
 
-  //   .stall_0_hazard    (),
-  //   .stall_1_hazard    (),
+  wire same_cycle_waw_Dhl = rf0_wen_Dhl && rf1_wen_Dhl
+                         && ( rf0_waddr_Dhl != 5'd0 )
+                         && ( rf0_waddr_Dhl == rf1_waddr_Dhl );
 
-  //   .src00_byp_mux_sel (),
-  //   .src01_byp_mux_sel (),
-  //   .src10_byp_mux_sel (),
-  //   .src11_byp_mux_sel (),
+  // Conservative Part-2 issue policy:
+  // - ALU + ALU              : dual issue in program order
+  // - non-ALU + ALU          : dual issue in program order
+  // - ALU + non-ALU          : dual issue after swapping onto A/B
+  // - control-flow as slot 0 : serialize to avoid speculative B-side issue
+  // - RAW/WAW in same pair   : serialize and keep inst1 in D
 
-  //   .dstA              (),
-  //   .dstA_en           (),
-  //   .stall_A_Dhl       (),
-  //   .is_muldiv_A       (),
-  //   .is_load_A         (),
+  wire issue_fresh_pair_Dhl       = !issue_slot_Dhl;
+  wire issue_retained_slot1_Dhl   =  issue_slot_Dhl;
+  wire same_cycle_pair_clear_Dhl  = !same_cycle_raw_Dhl && !same_cycle_waw_Dhl;
 
-  //   .stall_X0hl        (),
-  //   .stall_X1hl        ()
-  // );
+  wire pair_is_alu_alu_Dhl        =  is_simple_alu_0_Dhl &&  is_simple_alu_1_Dhl;
+  wire pair_is_nonalu_alu_Dhl     = !is_simple_alu_0_Dhl &&  is_simple_alu_1_Dhl && !is_ctrl_0_Dhl;
+  wire pair_is_alu_nonalu_Dhl     =  is_simple_alu_0_Dhl && !is_simple_alu_1_Dhl;
+
+  wire can_dual_normal_Dhl = issue_fresh_pair_Dhl
+                          && same_cycle_pair_clear_Dhl
+                          && ( pair_is_alu_alu_Dhl || pair_is_nonalu_alu_Dhl );
+
+  wire can_dual_swap_Dhl = issue_fresh_pair_Dhl
+                        && same_cycle_pair_clear_Dhl
+                        && pair_is_alu_nonalu_Dhl;
+
+  wire select_inst1_as_A_Dhl = issue_slot_Dhl || can_dual_swap_Dhl;
+  wire select_inst1_as_B_Dhl = can_dual_normal_Dhl;
+
+  // After steering, the rest of the controller only needs to reason
+  // about "selected A" (the oldest issued instruction) and "selected B"
+  // (the optional second issued instruction).
+
+  wire brj_taken_Dhl = select_inst1_as_A_Dhl ? brj_taken_1_Dhl : brj_taken_0_Dhl;
+  wire [2:0] br_sel_Dhl = select_inst1_as_A_Dhl ? br_sel_1_Dhl : br_sel_0_Dhl;
+  wire [1:0] pc_mux_sel_Dhl = select_inst1_as_A_Dhl ? pc_mux_sel_1_Dhl : pc_mux_sel_0_Dhl;
+
+  wire [3:0] aluA_fn_Dhl = select_inst1_as_A_Dhl ? alu1_fn_Dhl : alu0_fn_Dhl;
+  wire [2:0] muldivreq_msg_fn_sel_Dhl = select_inst1_as_A_Dhl ? muldivreq_msg_fn_1_Dhl
+                                                               : muldivreq_msg_fn_0_Dhl;
+  wire       muldivreq_val_sel_Dhl = select_inst1_as_A_Dhl ? muldivreq_val_1_Dhl : muldivreq_val_0_Dhl;
+  wire       muldiv_mux_sel_sel_Dhl = select_inst1_as_A_Dhl ? muldiv_mux_sel_1_Dhl : muldiv_mux_sel_0_Dhl;
+  wire       execute_mux_sel_sel_Dhl = select_inst1_as_A_Dhl ? execute_mux_sel_1_Dhl : execute_mux_sel_0_Dhl;
+  wire       is_load_sel_Dhl = select_inst1_as_A_Dhl ? is_load_1_Dhl : is_load_0_Dhl;
+  wire       dmemreq_msg_rw_sel_Dhl = select_inst1_as_A_Dhl ? dmemreq_msg_rw_1_Dhl : dmemreq_msg_rw_0_Dhl;
+  wire [1:0] dmemreq_msg_len_sel_Dhl = select_inst1_as_A_Dhl ? dmemreq_msg_len_1_Dhl : dmemreq_msg_len_0_Dhl;
+  wire       dmemreq_val_sel_Dhl = select_inst1_as_A_Dhl ? dmemreq_val_1_Dhl : dmemreq_val_0_Dhl;
+  wire [2:0] dmemresp_mux_sel_sel_Dhl = select_inst1_as_A_Dhl ? dmemresp_mux_sel_1_Dhl : dmemresp_mux_sel_0_Dhl;
+  wire       memex_mux_sel_sel_Dhl = select_inst1_as_A_Dhl ? memex_mux_sel_1_Dhl : memex_mux_sel_0_Dhl;
+  wire       rfA_wen_sel_Dhl = select_inst1_as_A_Dhl ? rf1_wen_Dhl : rf0_wen_Dhl;
+  wire [4:0] rfA_waddr_sel_Dhl = select_inst1_as_A_Dhl ? rf1_waddr_Dhl : rf0_waddr_Dhl;
+  wire       csr_wen_sel_Dhl = select_inst1_as_A_Dhl ? csr_wen_1_Dhl : csr_wen_0_Dhl;
+  wire [11:0] csr_addr_sel_Dhl = select_inst1_as_A_Dhl ? csr_addr_1_Dhl : csr_addr_0_Dhl;
+
+  wire [3:0] aluB_fn_sel_Dhl = select_inst1_as_B_Dhl ? alu1_fn_Dhl : alu0_fn_Dhl;
+  wire       rfB_wen_sel_Dhl = select_inst1_as_B_Dhl ? rf1_wen_Dhl : rf0_wen_Dhl;
+  wire [4:0] rfB_waddr_sel_Dhl = select_inst1_as_B_Dhl ? rf1_waddr_Dhl : rf0_waddr_Dhl;
+
+  // Instantiate the scoreboard after all decode metadata is available.
+
+  riscv_CoreScoreboard scoreboard
+  (
+    .clk               (clk),
+    .reset             (reset),
+    .inst_val_Dhl      (inst_val_Dhl),
+    .src00             (rs10_addr_Dhl),
+    .src00_en          (rs10_en_Dhl),
+    .src01             (rs20_addr_Dhl),
+    .src01_en          (rs20_en_Dhl),
+    .src10             (rs11_addr_Dhl),
+    .src10_en          (rs11_en_Dhl),
+    .src11             (rs21_addr_Dhl),
+    .src11_en          (rs21_en_Dhl),
+    .dstA              (rfA_waddr_sel_Dhl),
+    .dstA_en           (rfA_wen_sel_Dhl),
+    .stall_A_Dhl       (1'b0),
+    .is_muldiv_A       (muldivreq_val_sel_Dhl),
+    .is_load_A         (is_load_sel_Dhl),
+    .dstB              (rfB_waddr_sel_Dhl),
+    .dstB_en           (rfB_wen_sel_Dhl),
+    .stall_B_Dhl       (1'b0),
+    .is_muldiv_B       (1'b0),
+    .is_load_B         (1'b0),
+    .instA_val_X0hl    (inst_val_X0hl),
+    .instA_val_X1hl    (inst_val_X1hl),
+    .instA_val_X2hl    (inst_val_X2hl),
+    .instA_val_X3hl    (inst_val_X3hl),
+    .instA_val_Whl     (inst_val_Whl),
+    .rfA_wen_X0hl      (rfA_wen_X0hl),
+    .rfA_wen_X1hl      (rfA_wen_X1hl),
+    .rfA_wen_X2hl      (rfA_wen_X2hl),
+    .rfA_wen_X3hl      (rfA_wen_X3hl),
+    .rfA_wen_Whl       (rfA_wen_Whl),
+    .rfA_waddr_X0hl    (rfA_waddr_X0hl),
+    .rfA_waddr_X1hl    (rfA_waddr_X1hl),
+    .rfA_waddr_X2hl    (rfA_waddr_X2hl),
+    .rfA_waddr_X3hl    (rfA_waddr_X3hl),
+    .rfA_waddr_Whl     (rfA_waddr_Whl),
+    .instB_val_X0hl    (instB_val_X0hl),
+    .instB_val_X1hl    (instB_val_X1hl),
+    .instB_val_X2hl    (instB_val_X2hl),
+    .instB_val_X3hl    (instB_val_X3hl),
+    .instB_val_Whl     (instB_val_Whl),
+    .rfB_wen_X0hl      (rfB_wen_X0hl),
+    .rfB_wen_X1hl      (rfB_wen_X1hl),
+    .rfB_wen_X2hl      (rfB_wen_X2hl),
+    .rfB_wen_X3hl      (rfB_wen_X3hl),
+    .rfB_wen_Whl       (rfB_wen_Whl),
+    .rfB_waddr_X0hl    (rfB_waddr_X0hl),
+    .rfB_waddr_X1hl    (rfB_waddr_X1hl),
+    .rfB_waddr_X2hl    (rfB_waddr_X2hl),
+    .rfB_waddr_X3hl    (rfB_waddr_X3hl),
+    .rfB_waddr_Whl     (rfB_waddr_Whl),
+    .is_load_A_X0hl    (is_load_X0hl),
+    .is_muldiv_A_X0hl  (is_muldiv_X0hl),
+    .is_muldiv_A_X1hl  (is_muldiv_X1hl),
+    .is_muldiv_A_X2hl  (is_muldiv_X2hl),
+    .stall_X0hl        (stall_X0hl),
+    .stall_X1hl        (stall_X1hl),
+    .stall_X2hl        (stall_X2hl),
+    .stall_X3hl        (stall_X3hl),
+    .stall_0_hazard    (stall_0_hazard_sb_Dhl),
+    .stall_1_hazard    (stall_1_hazard_sb_Dhl),
+    .src00_byp_mux_sel (op00_byp_mux_sel_Dhl),
+    .src01_byp_mux_sel (op01_byp_mux_sel_Dhl),
+    .src10_byp_mux_sel (op10_byp_mux_sel_Dhl),
+    .src11_byp_mux_sel (op11_byp_mux_sel_Dhl)
+  );
+
+  // Scoreboard hazards are still indexed by fetch order, so convert them
+  // to "oldest instruction" / "younger instruction" terminology here.
+
+  wire oldest_hazard_Dhl = issue_retained_slot1_Dhl ? stall_1_hazard_sb_Dhl
+                                                    : stall_0_hazard_sb_Dhl;
+  wire slot1_hazard_Dhl  = stall_1_hazard_sb_Dhl;
+  wire unresolved_branch_X0hl = inst_val_X0hl && ( br_sel_X0hl != br_none );
+  wire stall_retained_slot1_Dhl = issue_retained_slot1_Dhl
+                               && unresolved_branch_X0hl
+                               && !brj_taken_X0hl;
+
+  wire issue_oldest_Dhl = inst_val_Dhl
+                       && !stall_X0hl
+                       && !oldest_hazard_Dhl
+                       && !stall_retained_slot1_Dhl;
+  wire issue_dual_Dhl = issue_oldest_Dhl
+                     && !issue_slot_Dhl
+                     && ( can_dual_normal_Dhl || can_dual_swap_Dhl )
+                     && !slot1_hazard_Dhl;
+
+  wire issue_slot1_only_Dhl = issue_oldest_Dhl && issue_retained_slot1_Dhl;
+  wire issue_slot0_only_Dhl = issue_oldest_Dhl && issue_fresh_pair_Dhl && !issue_dual_Dhl;
+
+  wire hold_slot1_Dhl = issue_slot0_only_Dhl && !brj_taken_0_Dhl;
+
+  // The decode-state machine is intentionally tiny: either hold inst1 for
+  // the next cycle, or reset back to "fresh pair" mode after any squash or
+  // after successfully consuming the retained instruction.
+  always @(posedge clk) begin
+    if (reset || ((brj_taken_Dhl || brj_taken_X0hl) && !stall_X0hl)) begin
+      issue_slot_Dhl <= 1'b0;
+    end
+    else if (issue_slot1_only_Dhl) begin
+      issue_slot_Dhl <= 1'b0;
+    end
+    else if (hold_slot1_Dhl) begin
+      issue_slot_Dhl <= 1'b1;
+    end
+    else if (issue_dual_Dhl || issue_slot0_only_Dhl) begin
+      issue_slot_Dhl <= 1'b0;
+    end
+  end
+
+  assign steering_mux_sel_Dhl = select_inst1_as_A_Dhl;
+
+  wire issue_B_valid_Dhl = issue_dual_Dhl;
+
+  // Pipeline A always carries the oldest instruction selected this cycle.
+  always @(*) begin
+    if ( select_inst1_as_A_Dhl ) begin
+      instA_Dhl            = ir1_Dhl;
+      opA0_byp_mux_sel_Dhl = op10_byp_mux_sel_Dhl;
+      opA1_byp_mux_sel_Dhl = op11_byp_mux_sel_Dhl;
+      opA0_mux_sel_Dhl     = op10_mux_sel_Dhl;
+      opA1_mux_sel_Dhl     = op11_mux_sel_Dhl;
+      muldivreq_msg_fn_Dhl = muldivreq_msg_fn_1_Dhl;
+    end
+    else begin
+      instA_Dhl            = ir0_Dhl;
+      opA0_byp_mux_sel_Dhl = op00_byp_mux_sel_Dhl;
+      opA1_byp_mux_sel_Dhl = op01_byp_mux_sel_Dhl;
+      opA0_mux_sel_Dhl     = op00_mux_sel_Dhl;
+      opA1_mux_sel_Dhl     = op01_mux_sel_Dhl;
+      muldivreq_msg_fn_Dhl = muldivreq_msg_fn_0_Dhl;
+    end
+  end
+
+  // Pipeline B only carries a second instruction on real dual-issue cycles.
+  wire [31:0] instB_issue_Dhl = issue_B_valid_Dhl
+                              ? ( select_inst1_as_B_Dhl ? ir1_Dhl : ir0_Dhl )
+                              : rv32_nop;
+  assign instB_Dhl = instB_issue_Dhl;
+
+  assign opB0_byp_mux_sel_Dhl = issue_B_valid_Dhl
+                              ? ( select_inst1_as_B_Dhl ? op10_byp_mux_sel_Dhl : op00_byp_mux_sel_Dhl )
+                              : 4'd0;
+  assign opB1_byp_mux_sel_Dhl = issue_B_valid_Dhl
+                              ? ( select_inst1_as_B_Dhl ? op11_byp_mux_sel_Dhl : op01_byp_mux_sel_Dhl )
+                              : 4'd0;
+  assign opB0_mux_sel_Dhl     = issue_B_valid_Dhl
+                              ? ( select_inst1_as_B_Dhl ? op10_mux_sel_Dhl : op00_mux_sel_Dhl )
+                              : 2'd0;
+  assign opB1_mux_sel_Dhl     = issue_B_valid_Dhl
+                              ? ( select_inst1_as_B_Dhl ? op11_mux_sel_Dhl : op01_mux_sel_Dhl )
+                              : 3'd0;
+
+  wire [3:0] aluB_fn_Dhl = issue_B_valid_Dhl ? aluB_fn_sel_Dhl : 4'd0;
+
+  wire       muldivreq_val_Dhl = issue_oldest_Dhl ? muldivreq_val_sel_Dhl : 1'b0;
+  wire       muldiv_mux_sel_Dhl = muldiv_mux_sel_sel_Dhl;
+  wire       execute_mux_sel_Dhl = execute_mux_sel_sel_Dhl;
+  wire       is_load_Dhl = is_load_sel_Dhl;
+  wire       dmemreq_msg_rw_Dhl = dmemreq_msg_rw_sel_Dhl;
+  wire [1:0] dmemreq_msg_len_Dhl = dmemreq_msg_len_sel_Dhl;
+  wire       dmemreq_val_Dhl = issue_oldest_Dhl ? dmemreq_val_sel_Dhl : 1'b0;
+  wire [2:0] dmemresp_mux_sel_Dhl = dmemresp_mux_sel_sel_Dhl;
+  wire       memex_mux_sel_Dhl = memex_mux_sel_sel_Dhl;
+  wire       rfA_wen_Dhl = issue_oldest_Dhl ? rfA_wen_sel_Dhl : 1'b0;
+  wire [4:0] rfA_waddr_Dhl = rfA_waddr_sel_Dhl;
+  wire       rfB_wen_Dhl = issue_B_valid_Dhl ? rfB_wen_sel_Dhl : 1'b0;
+  wire [4:0] rfB_waddr_Dhl = rfB_waddr_sel_Dhl;
+  wire       csr_wen_Dhl = issue_oldest_Dhl ? csr_wen_sel_Dhl : 1'b0;
+  wire [11:0] csr_addr_Dhl = csr_addr_sel_Dhl;
 
   //----------------------------------------------------------------------
   // Squash and Stall Logic
   //----------------------------------------------------------------------
 
-  // Squash instruction in D if a valid branch in X is taken
-
   wire squash_Dhl = ( inst_val_X0hl && brj_taken_X0hl );
 
-  // For Part 2 of this lab, replace the multdiv and ld stall logic with a scoreboard based stall logic
+  wire stall_hazard_Dhl = oldest_hazard_Dhl || stall_retained_slot1_Dhl;
+  assign stall_Dhl = ( stall_hazard_Dhl || stall_X0hl || hold_slot1_Dhl );
 
-  // Stall in D if muldiv unit is not ready and there is a valid request
-  
-  wire stall_0_muldiv_use_Dhl = inst_val_Dhl && (
-                              ( inst_val_X0hl && rs10_en_Dhl && rfA_wen_X0hl
-                                && ( rs10_addr_Dhl == rfA_waddr_X0hl )
-                                && ( rfA_waddr_X0hl != 5'd0 ) && is_muldiv_X0hl )
-                           || ( inst_val_X1hl && rs10_en_Dhl && rfA_wen_X1hl
-                                && ( rs10_addr_Dhl == rfA_waddr_X1hl )
-                                && ( rfA_waddr_X1hl != 5'd0 ) && is_muldiv_X1hl )
-                           || ( inst_val_X2hl && rs10_en_Dhl && rfA_wen_X2hl
-                                && ( rs10_addr_Dhl == rfA_waddr_X2hl )
-                                && ( rfA_waddr_X2hl != 5'd0 ) && is_muldiv_X2hl )
-                           || ( inst_val_X0hl && rs20_en_Dhl && rfA_wen_X0hl
-                                && ( rs20_addr_Dhl == rfA_waddr_X0hl )
-                                && ( rfA_waddr_X0hl != 5'd0 ) && is_muldiv_X0hl )
-                           || ( inst_val_X1hl && rs20_en_Dhl && rfA_wen_X1hl
-                                && ( rs20_addr_Dhl == rfA_waddr_X1hl )
-                                && ( rfA_waddr_X1hl != 5'd0 ) && is_muldiv_X1hl )
-                           || ( inst_val_X2hl && rs20_en_Dhl && rfA_wen_X2hl
-                                && ( rs20_addr_Dhl == rfA_waddr_X2hl )
-                                && ( rfA_waddr_X2hl != 5'd0 ) && is_muldiv_X2hl ));
-  wire stall_1_muldiv_use_Dhl = inst_val_Dhl && (
-                              ( inst_val_X0hl && rs11_en_Dhl && rfA_wen_X0hl
-                                && ( rs11_addr_Dhl == rfA_waddr_X0hl )
-                                && ( rfA_waddr_X0hl != 5'd0 ) && is_muldiv_X0hl )
-                           || ( inst_val_X1hl && rs11_en_Dhl && rfA_wen_X1hl
-                                && ( rs11_addr_Dhl == rfA_waddr_X1hl )
-                                && ( rfA_waddr_X1hl != 5'd0 ) && is_muldiv_X1hl )
-                           || ( inst_val_X2hl && rs11_en_Dhl && rfA_wen_X2hl
-                                && ( rs11_addr_Dhl == rfA_waddr_X2hl )
-                                && ( rfA_waddr_X2hl != 5'd0 ) && is_muldiv_X2hl )
-                           || ( inst_val_X0hl && rs21_en_Dhl && rfA_wen_X0hl
-                                && ( rs21_addr_Dhl == rfA_waddr_X0hl )
-                                && ( rfA_waddr_X0hl != 5'd0 ) && is_muldiv_X0hl )
-                           || ( inst_val_X1hl && rs21_en_Dhl && rfA_wen_X1hl
-                                && ( rs21_addr_Dhl == rfA_waddr_X1hl )
-                                && ( rfA_waddr_X1hl != 5'd0 ) && is_muldiv_X1hl )
-                           || ( inst_val_X2hl && rs21_en_Dhl && rfA_wen_X2hl
-                                && ( rs21_addr_Dhl == rfA_waddr_X2hl )
-                                && ( rfA_waddr_X2hl != 5'd0 ) && is_muldiv_X2hl ));
-
-  // Stall for load-use only if instruction in D is valid and either of
-  // the source registers match the destination register of of a valid
-  // instruction in a later stage.
-
-  wire stall_0_load_use_Dhl = inst_val_Dhl && (
-                            ( inst_val_X0hl && rs10_en_Dhl && rfA_wen_X0hl
-                              && ( rs10_addr_Dhl == rfA_waddr_X0hl )
-                              && ( rfA_waddr_X0hl != 5'd0 ) && is_load_X0hl )
-                         || ( inst_val_X0hl && rs20_en_Dhl && rfA_wen_X0hl
-                              && ( rs20_addr_Dhl == rfA_waddr_X0hl )
-                              && ( rfA_waddr_X0hl != 5'd0 ) && is_load_X0hl ) );
-
-  wire stall_1_load_use_Dhl = inst_val_Dhl && (
-                            ( inst_val_X0hl && rs11_en_Dhl && rfA_wen_X0hl
-                              && ( rs11_addr_Dhl == rfA_waddr_X0hl )
-                              && ( rfA_waddr_X0hl != 5'd0 ) && is_load_X0hl )
-                         || ( inst_val_X0hl && rs21_en_Dhl && rfA_wen_X0hl
-                              && ( rs21_addr_Dhl == rfA_waddr_X0hl )
-                              && ( rfA_waddr_X0hl != 5'd0 ) && is_load_X0hl ) );
-
-  // Aggregate Stall Signal
-  // Hazard detection 
-  wire stall_hazard_Dhl =  ( issue_slot_Dhl == 1'b0 ) 
-                        ?  ( stall_0_muldiv_use_Dhl || stall_0_load_use_Dhl )
-                        :  ( stall_1_muldiv_use_Dhl || stall_1_load_use_Dhl );
-
-  // wire stall_issue_Dhl = (issue_slot_Dhl == 1'b0 && inst_val_Dhl && !brj_taken_Dhl);
-  assign stall_Dhl = (stall_hazard_Dhl || stall_X0hl /* || stall_issue_Dhl */ ); // TODO
-
-  // Next bubble bit
-
-  wire bubble_sel_Dhl  = squash_Dhl || stall_hazard_Dhl || stall_X0hl; // TODO
+  wire bubble_sel_Dhl  = squash_Dhl || stall_hazard_Dhl || stall_X0hl;
   wire bubble_next_Dhl = ( !bubble_sel_Dhl ) ? bubble_Dhl
                        : ( bubble_sel_Dhl )  ? 1'b1
                        :                       1'bx;
@@ -1014,35 +1037,23 @@ module riscv_CoreCtrl
   // X0 <- D
   //----------------------------------------------------------------------
 
-  reg [31:0] irA_X0hl;
-  reg  [2:0] br_sel_X0hl;
-  reg        muldivreq_val_X0hl;
-  reg        muldiv_mux_sel_X0hl;
-  reg        execute_mux_sel_X0hl;
-  reg        is_load_X0hl;
-  reg        is_muldiv_X0hl;
-  reg        dmemreq_msg_rw_X0hl;
-  reg  [1:0] dmemreq_msg_len_X0hl;
-  reg        dmemreq_val_X0hl;
-  reg  [2:0] dmemresp_mux_sel_X0hl;
-  reg        memex_mux_sel_X0hl;
-  reg        rfA_wen_X0hl;
-  reg  [4:0] rfA_waddr_X0hl;
-  reg        csr_wen_X0hl;
-  reg [11:0] csr_addr_X0hl;
-
-  reg        bubble_X0hl;
-
   // Pipeline Controls
 
   always @ ( posedge clk ) begin
     if ( reset ) begin
+      irB_X0hl       <= rv32_nop;
+      aluB_fn_X0hl   <= alu_add;
+      instB_val_X0hl <= 1'b0;
+      rfB_wen_X0hl   <= 1'b0;
+      rfB_waddr_X0hl <= 5'd0;
       bubble_X0hl <= 1'b1;
     end
     else if( !stall_X0hl ) begin
       irA_X0hl              <= instA_Dhl;
+      irB_X0hl              <= instB_Dhl;
       br_sel_X0hl           <= br_sel_Dhl;
       aluA_fn_X0hl          <= aluA_fn_Dhl;
+      aluB_fn_X0hl          <= aluB_fn_Dhl;
       muldivreq_val_X0hl    <= muldivreq_val_Dhl;
       muldiv_mux_sel_X0hl   <= muldiv_mux_sel_Dhl;
       execute_mux_sel_X0hl  <= execute_mux_sel_Dhl;
@@ -1055,6 +1066,9 @@ module riscv_CoreCtrl
       memex_mux_sel_X0hl    <= memex_mux_sel_Dhl;
       rfA_wen_X0hl          <= rfA_wen_Dhl;
       rfA_waddr_X0hl        <= rfA_waddr_Dhl;
+      instB_val_X0hl        <= issue_B_valid_Dhl;
+      rfB_wen_X0hl          <= rfB_wen_Dhl;
+      rfB_waddr_X0hl        <= rfB_waddr_Dhl;
       csr_wen_X0hl          <= csr_wen_Dhl;
       csr_addr_X0hl         <= csr_addr_Dhl;
 
@@ -1069,7 +1083,7 @@ module riscv_CoreCtrl
 
   // Is the current stage valid?
 
-  wire inst_val_X0hl = ( !bubble_X0hl && !squash_X0hl );
+  assign inst_val_X0hl = ( !bubble_X0hl && !squash_X0hl );
 
   // Muldiv request
 
@@ -1134,24 +1148,15 @@ module riscv_CoreCtrl
   // X1 <- X0
   //----------------------------------------------------------------------
 
-  reg [31:0] irA_X1hl;
-  reg        is_load_X1hl;
-  reg        is_muldiv_X1hl;
-  reg        dmemreq_val_X1hl;
-  reg        execute_mux_sel_X1hl;
-  reg        muldiv_mux_sel_X1hl;
-  reg        rfA_wen_X1hl;
-  reg  [4:0] rfA_waddr_X1hl;
-  reg        csr_wen_X1hl;
-  reg  [4:0] csr_addr_X1hl;
-
-  reg        bubble_X1hl;
-
   // Pipeline Controls
 
   always @ ( posedge clk ) begin
     if ( reset ) begin
       dmemreq_val_X1hl <= 1'b0;
+      irB_X1hl         <= rv32_nop;
+      instB_val_X1hl   <= 1'b0;
+      rfB_wen_X1hl     <= 1'b0;
+      rfB_waddr_X1hl   <= 5'd0;
 
       bubble_X1hl <= 1'b1;
     end
@@ -1167,6 +1172,9 @@ module riscv_CoreCtrl
       muldiv_mux_sel_X1hl   <= muldiv_mux_sel_X0hl;
       rfA_wen_X1hl          <= rfA_wen_X0hl;
       rfA_waddr_X1hl        <= rfA_waddr_X0hl;
+      instB_val_X1hl        <= instB_val_X0hl;
+      rfB_wen_X1hl          <= rfB_wen_X0hl;
+      rfB_waddr_X1hl        <= rfB_waddr_X0hl;
       csr_wen_X1hl          <= csr_wen_X0hl;
       csr_addr_X1hl         <= csr_addr_X0hl;
 
@@ -1180,7 +1188,7 @@ module riscv_CoreCtrl
 
   // Is current stage valid?
 
-  wire inst_val_X1hl = ( !bubble_X1hl && !squash_X1hl );
+  assign inst_val_X1hl = ( !bubble_X1hl && !squash_X1hl );
 
   // Data memory queue control signals
 
@@ -1215,29 +1223,26 @@ module riscv_CoreCtrl
   // X2 <- X1
   //----------------------------------------------------------------------
 
-  reg [31:0] irA_X2hl;
-  reg        is_muldiv_X2hl;
-  reg        rfA_wen_X2hl;
-  reg  [4:0] rfA_waddr_X2hl;
-  reg        csr_wen_X2hl;
-  reg  [4:0] csr_addr_X2hl;
-  reg        execute_mux_sel_X2hl;
-  reg        muldiv_mux_sel_X2hl;
-
-  reg        bubble_X2hl;
-
   // Pipeline Controls
 
   always @ ( posedge clk ) begin
     if ( reset ) begin
+      irB_X2hl       <= rv32_nop;
+      instB_val_X2hl <= 1'b0;
+      rfB_wen_X2hl   <= 1'b0;
+      rfB_waddr_X2hl <= 5'd0;
       bubble_X2hl <= 1'b1;
     end
     else if( !stall_X2hl ) begin
       irA_X2hl              <= irA_X1hl;
+      irB_X2hl              <= irB_X1hl;
       is_muldiv_X2hl        <= is_muldiv_X1hl;
       muldiv_mux_sel_X2hl   <= muldiv_mux_sel_X1hl;
       rfA_wen_X2hl          <= rfA_wen_X1hl;
       rfA_waddr_X2hl        <= rfA_waddr_X1hl;
+      instB_val_X2hl        <= instB_val_X1hl;
+      rfB_wen_X2hl          <= rfB_wen_X1hl;
+      rfB_waddr_X2hl        <= rfB_waddr_X1hl;
       csr_wen_X2hl          <= csr_wen_X1hl;
       csr_addr_X2hl         <= csr_addr_X1hl;
       execute_mux_sel_X2hl  <= execute_mux_sel_X1hl;
@@ -1253,7 +1258,7 @@ module riscv_CoreCtrl
 
   // Is current stage valid?
 
-  wire inst_val_X2hl = ( !bubble_X2hl && !squash_X2hl );
+  assign inst_val_X2hl = ( !bubble_X2hl && !squash_X2hl );
 
   // Dummy Squash Signal
 
@@ -1274,27 +1279,26 @@ module riscv_CoreCtrl
   // X3 <- X2
   //----------------------------------------------------------------------
 
-  reg [31:0] irA_X3hl;
-  reg        is_muldiv_X3hl;
-  reg        rfA_wen_X3hl;
-  reg  [4:0] rfA_waddr_X3hl;
-  reg        csr_wen_X3hl;
-  reg  [4:0] csr_addr_X3hl;
-
-  reg        bubble_X3hl;
-
   // Pipeline Controls
 
   always @ ( posedge clk ) begin
     if ( reset ) begin
+      irB_X3hl       <= rv32_nop;
+      instB_val_X3hl <= 1'b0;
+      rfB_wen_X3hl   <= 1'b0;
+      rfB_waddr_X3hl <= 5'd0;
       bubble_X3hl <= 1'b1;
     end
     else if( !stall_X3hl ) begin
       irA_X3hl              <= irA_X2hl;
+      irB_X3hl              <= irB_X2hl;
       is_muldiv_X3hl        <= is_muldiv_X2hl;
       muldiv_mux_sel_X3hl   <= muldiv_mux_sel_X2hl;
       rfA_wen_X3hl          <= rfA_wen_X2hl;
       rfA_waddr_X3hl        <= rfA_waddr_X2hl;
+      instB_val_X3hl        <= instB_val_X2hl;
+      rfB_wen_X3hl          <= rfB_wen_X2hl;
+      rfB_waddr_X3hl        <= rfB_waddr_X2hl;
       csr_wen_X3hl          <= csr_wen_X2hl;
       csr_addr_X3hl         <= csr_addr_X2hl;
       execute_mux_sel_X3hl  <= execute_mux_sel_X2hl;
@@ -1309,7 +1313,7 @@ module riscv_CoreCtrl
 
   // Is current stage valid?
 
-  wire inst_val_X3hl = ( !bubble_X3hl && !squash_X3hl );
+  assign inst_val_X3hl = ( !bubble_X3hl && !squash_X3hl );
 
   // Dummy Squash Signal
 
@@ -1330,23 +1334,24 @@ module riscv_CoreCtrl
   // W <- X3
   //----------------------------------------------------------------------
 
-  reg [31:0] irA_Whl;
-  reg        rfA_wen_Whl;
-  reg        csr_wen_Whl;
-  reg  [4:0] csr_addr_Whl;
-
-  reg        bubble_Whl;
-
   // Pipeline Controls
 
   always @ ( posedge clk ) begin
     if ( reset ) begin
+      irB_Whl       <= rv32_nop;
+      instB_val_Whl <= 1'b0;
+      rfB_wen_Whl   <= 1'b0;
+      rfB_waddr_Whl <= 5'd0;
       bubble_Whl <= 1'b1;
     end
     else if( !stall_Whl ) begin
       irA_Whl          <= irA_X3hl;
+      irB_Whl          <= irB_X3hl;
       rfA_wen_Whl      <= rfA_wen_X3hl;
       rfA_waddr_Whl    <= rfA_waddr_X3hl;
+      instB_val_Whl    <= instB_val_X3hl;
+      rfB_wen_Whl      <= rfB_wen_X3hl;
+      rfB_waddr_Whl    <= rfB_waddr_X3hl;
       csr_wen_Whl      <= csr_wen_X3hl;
       csr_addr_Whl     <= csr_addr_X3hl;
 
@@ -1360,11 +1365,12 @@ module riscv_CoreCtrl
 
   // Is current stage valid?
 
-  wire inst_val_Whl = ( !bubble_Whl && !squash_Whl );
+  assign inst_val_Whl = ( !bubble_Whl && !squash_Whl );
 
   // Only set register file wen if stage is valid
 
   assign rfA_wen_out_Whl = ( inst_val_Whl && !stall_Whl && rfA_wen_Whl );
+  assign rfB_wen_out_Whl = ( inst_val_Whl && !stall_Whl && instB_val_Whl && rfB_wen_Whl );
 
   // Dummy squash and stall signals
 
@@ -1382,7 +1388,7 @@ module riscv_CoreCtrl
   always @ ( posedge clk ) begin
     irA_debug       <= irA_Whl;
     inst_val_debug <= inst_val_Whl;
-    irB_debug       <= 32'b0; // FIXME: fix this when you can have two instructions issued per cycle!
+    irB_debug       <= irB_Whl;
   end
 
   //----------------------------------------------------------------------
@@ -1403,8 +1409,6 @@ module riscv_CoreCtrl
 //========================================================================
 // Disassemble instructions
 //========================================================================
-  wire [31:0] irB_X0hl, irB_X1hl, irB_X2hl, irB_X3hl, irB_Whl;
-
   `ifndef SYNTHESIS
 
   riscv_InstMsgDisasm inst0_msg_disasm_D
@@ -1525,10 +1529,10 @@ module riscv_CoreCtrl
       if ( stats_en || csr_stats ) begin
         num_cycles = num_cycles + 1;
 
-        // Count instructions for every cycle not squashed or stalled
-
-        // FIXME: fix this when you can have at most two instructions issued per cycle!
-        if ( inst_val_Dhl && !stall_Dhl ) begin
+        if ( issue_dual_Dhl ) begin
+          num_inst = num_inst + 2;
+        end
+        else if ( issue_oldest_Dhl ) begin
           num_inst = num_inst + 1;
         end
 

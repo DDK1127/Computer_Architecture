@@ -5,7 +5,7 @@ VCD info: dumpfile ../tests/build/vmh/riscv-sll.vcd opened for output.
  STATS                                      
 --------------------------------------------
  status     =          1
- num_cycles =        274
- num_inst   =        134
- ipc        = 0.489051
-../riscvssc/riscvssc-sim.v:495: $finish called at 2795 (1s)
+ num_cycles =        214
+ num_inst   =        270
+ ipc        = 1.261682
+../riscvssc/riscvssc-sim.v:495: $finish called at 2195 (1s)

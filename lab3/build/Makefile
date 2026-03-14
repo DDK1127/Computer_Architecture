@@ -68,6 +68,7 @@ tests = \
   riscv-bltu.vmh \
   riscv-div.vmh \
   riscv-divu.vmh \
+  riscv-dualfetch-kill.vmh \
   riscv-j.vmh \
   riscv-jalr.vmh \
   riscv-lb.vmh \
@@ -373,4 +374,3 @@ clean :
 	rm -rf *~ \#* *.vcd $(junk)
 
 .PHONY : clean
-
